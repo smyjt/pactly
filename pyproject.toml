@@ -1,0 +1,43 @@
+[project]
+name = "pactly"
+version = "0.1.0"
+description = "AI Contract Intelligence Engine"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pgvector>=0.3.6",
+    "celery[redis]>=5.4.0",
+    "pydantic-settings>=2.7.0",
+    "openai>=1.60.0",
+    "pymupdf>=1.25.0",
+    "python-docx>=1.1.0",
+    "tiktoken>=0.8.0",
+    "tenacity>=9.0.0",
+    "python-multipart>=0.0.18",
+    "httpx>=0.28.0",
+    "aiofiles>=24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.9.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["N805", "N806"]
