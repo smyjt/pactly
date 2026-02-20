@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.database import create_engine, create_session_factory
@@ -10,7 +11,6 @@ from app.database import create_engine, create_session_factory
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator:
     """Manage application lifecycle: set up DB engine on startup, dispose on shutdown."""
-    # Startup
     settings: Settings = application.state.settings
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
@@ -19,12 +19,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator:
 
     yield
 
-    # Shutdown
     await application.state.engine.dispose()
 
 
 def create_app() -> FastAPI:
-    """Application factory — creates and configures the FastAPI app."""
+    """Application factory."""
     settings = Settings()
 
     application = FastAPI(
@@ -37,9 +36,33 @@ def create_app() -> FastAPI:
 
     application.state.settings = settings
 
+    # Database session dependency — injected into every route that needs DB access
+    async def get_session() -> AsyncGenerator[AsyncSession, None]:
+        async with application.state.session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    # Register routers
+    from app.routers.contracts import router as contracts_router, get_contract_service
+    from app.repositories.contract_repo import ContractRepository
+    from app.services.contract_service import ContractService
+    from fastapi import Depends
+
+    # Override the session dependency so the router gets a real DB session
+    async def get_contract_service_with_session(
+        session: AsyncSession = Depends(get_session),
+    ) -> ContractService:
+        return ContractService(ContractRepository(session))
+
+    application.include_router(contracts_router, prefix="/api/v1")
+    application.dependency_overrides[get_contract_service] = get_contract_service_with_session
+
     @application.get("/health", tags=["system"])
     async def health_check():
-        """Liveness probe — returns 200 if the app is running."""
         return {"status": "healthy", "version": "0.1.0"}
 
     return application
