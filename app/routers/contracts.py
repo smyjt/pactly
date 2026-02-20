@@ -1,18 +1,17 @@
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ContractNotFoundError, DuplicateContractError, UnsupportedFileTypeError
-from app.repositories.contract_repo import ContractRepository
 from app.schemas.contract import ContractResponse, ContractUploadResponse
 from app.services.contract_service import ContractService
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 
 
-def get_contract_service(session: AsyncSession = Depends()) -> ContractService:
-    return ContractService(ContractRepository(session))
+def get_contract_service() -> ContractService:
+    # Placeholder — overridden in main.py with real DB session injection
+    raise NotImplementedError("Dependency override not configured")
 
 
 @router.post("", response_model=ContractUploadResponse, status_code=status.HTTP_201_CREATED)
