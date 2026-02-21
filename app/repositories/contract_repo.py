@@ -38,3 +38,12 @@ class ContractRepository:
             if error_message:
                 contract.error_message = error_message
             await self.session.flush()
+
+    async def update(self, contract_id: uuid.UUID, **kwargs) -> Contract | None:
+        contract = await self.get_by_id(contract_id)
+        if not contract:
+            return None
+        for key, value in kwargs.items():
+            setattr(contract, key, value)
+        await self.session.flush()
+        return contract
