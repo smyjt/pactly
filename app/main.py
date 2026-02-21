@@ -13,15 +13,20 @@ from app.middleware import RequestIDLogFilter, RequestIDMiddleware
 def configure_logging(log_level: str) -> None:
     """Set up logging with request ID injected into every log line."""
     log_filter = RequestIDLogFilter()
-
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s",
+    formatter = logging.Formatter(
+        "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
     )
 
-    # Attach the filter to the root logger so all loggers inherit it
-    for handler in logging.root.handlers:
-        handler.addFilter(log_filter)
+    # Replace existing handlers on the root logger rather than using basicConfig
+    # (basicConfig is a no-op if handlers are already set, which uvicorn does at startup)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    root_logger.handlers.clear()
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    handler.addFilter(log_filter)
+    root_logger.addHandler(handler)
 
 
 @asynccontextmanager
