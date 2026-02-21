@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -6,6 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.database import create_engine, create_session_factory
+from app.middleware import RequestIDLogFilter, RequestIDMiddleware
+
+
+def configure_logging(log_level: str) -> None:
+    """Set up logging with request ID injected into every log line."""
+    log_filter = RequestIDLogFilter()
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s",
+    )
+
+    # Attach the filter to the root logger so all loggers inherit it
+    for handler in logging.root.handlers:
+        handler.addFilter(log_filter)
 
 
 @asynccontextmanager
@@ -35,6 +51,9 @@ def create_app() -> FastAPI:
     )
 
     application.state.settings = settings
+
+    configure_logging(settings.LOG_LEVEL)
+    application.add_middleware(RequestIDMiddleware)
 
     # Database session dependency — injected into every route that needs DB access
     async def get_session() -> AsyncGenerator[AsyncSession, None]:
