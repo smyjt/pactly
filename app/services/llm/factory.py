@@ -11,4 +11,8 @@ def create_llm_provider(settings) -> LLMProvider:
         from app.services.llm.openai_provider import OpenAIProvider
         return OpenAIProvider(api_key=settings.OPENAI_API_KEY, model=settings.LLM_MODEL)
 
+    if settings.LLM_PROVIDER == "groq":
+        from app.services.llm.groq_provider import GroqProvider
+        return GroqProvider(api_key=settings.GROQ_API_KEY, model=settings.LLM_MODEL)
+
     raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER!r}")

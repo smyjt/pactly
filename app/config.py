@@ -11,8 +11,9 @@ class Settings(BaseSettings):
     """
 
     # LLM
-    OPENAI_API_KEY: str
-    LLM_PROVIDER: Literal["openai", "claude", "ollama"] = "openai"
+    OPENAI_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
+    LLM_PROVIDER: Literal["openai", "claude", "ollama", "groq"] = "openai"
     LLM_MODEL: str = "gpt-4o-mini"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSION: int = 1536
