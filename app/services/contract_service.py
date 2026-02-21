@@ -8,6 +8,7 @@ from fastapi import UploadFile
 from app.exceptions import ContractNotFoundError, DuplicateContractError, UnsupportedFileTypeError
 from app.repositories.contract_repo import ContractRepository
 from app.schemas.contract import ContractResponse, ContractUploadResponse
+from app.workers.contract_tasks import process_contract
 
 ALLOWED_CONTENT_TYPES = {
     "application/pdf": ".pdf",
@@ -54,9 +55,7 @@ class ContractService:
             status="pending",
         )
 
-        # TODO: Phase 2 — dispatch Celery task
-        # from app.workers.contract_tasks import process_contract
-        # process_contract.delay(str(contract.id))
+        process_contract.delay(str(contract.id))
 
         return ContractUploadResponse(
             id=contract.id,
