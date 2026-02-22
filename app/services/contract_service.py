@@ -66,6 +66,12 @@ class ContractService:
             status=contract.status,
         )
 
+    async def delete_contract(self, contract_id: uuid.UUID) -> None:
+        contract = await self.repo.get_by_id(contract_id)
+        if not contract:
+            raise ContractNotFoundError(str(contract_id))
+        await self.repo.delete(contract_id)
+
     async def get_contract(self, contract_id: uuid.UUID) -> ContractResponse:
         contract = await self.repo.get_by_id(contract_id)
         if not contract:

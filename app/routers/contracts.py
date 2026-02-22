@@ -38,3 +38,15 @@ async def get_contract(
         return await service.get_contract(contract_id)
     except ContractNotFoundError:
         raise HTTPException(status_code=404, detail=f"Contract {contract_id} not found.")
+
+
+@router.delete("/{contract_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_contract(
+    contract_id: uuid.UUID,
+    service: ContractService = Depends(get_contract_service),
+):
+    """Delete a contract and all associated data (chunks, clauses, risk assessments)."""
+    try:
+        await service.delete_contract(contract_id)
+    except ContractNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Contract {contract_id} not found.")
