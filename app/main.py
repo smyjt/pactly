@@ -76,19 +76,27 @@ def create_app() -> FastAPI:
                 raise
 
     # Register routers
-    from app.routers.contracts import router as contracts_router, get_contract_service
+    from app.routers.contracts import router as contracts_router, get_contract_service, get_clause_service
+    from app.repositories.clause_repo import ClauseRepository
     from app.repositories.contract_repo import ContractRepository
+    from app.services.clause_service import ClauseService
     from app.services.contract_service import ContractService
+    from app.services.llm.factory import create_llm_provider
     from fastapi import Depends
 
-    # Override the session dependency so the router gets a real DB session
     async def get_contract_service_with_session(
         session: AsyncSession = Depends(get_session),
     ) -> ContractService:
         return ContractService(ContractRepository(session))
 
+    async def get_clause_service_with_session(
+        session: AsyncSession = Depends(get_session),
+    ) -> ClauseService:
+        return ClauseService(llm=create_llm_provider(settings), repo=ClauseRepository(session))
+
     application.include_router(contracts_router, prefix="/api/v1")
     application.dependency_overrides[get_contract_service] = get_contract_service_with_session
+    application.dependency_overrides[get_clause_service] = get_clause_service_with_session
 
     @application.get("/health", tags=["Health Check"])
     async def health_check():

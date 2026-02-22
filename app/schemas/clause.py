@@ -1,3 +1,5 @@
+import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -30,3 +32,16 @@ class ExtractedClause(BaseModel):
 
 class ClauseExtractionResult(BaseModel):
     clauses: list[ExtractedClause]
+
+
+class ClauseResponse(BaseModel):
+    id: uuid.UUID
+    contract_id: uuid.UUID
+    clause_type: ClauseType
+    title: str
+    content: str
+    summary: str | None
+    section_reference: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

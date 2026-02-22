@@ -2,7 +2,8 @@ import json
 import logging
 import uuid
 
-from app.schemas.clause import ClauseExtractionResult
+from app.repositories.clause_repo import ClauseRepository
+from app.schemas.clause import ClauseExtractionResult, ClauseResponse
 from app.services.llm.base import LLMProvider
 from app.services.llm.prompts.clause_extraction import (
     CLAUSE_EXTRACTION_SYSTEM,
@@ -13,10 +14,23 @@ logger = logging.getLogger(__name__)
 
 
 class ClauseService:
-    def __init__(self, llm: LLMProvider, max_chars: int = 400_000, max_output_tokens: int = 4000):
+    def __init__(
+        self,
+        llm: LLMProvider,
+        repo: ClauseRepository | None = None,
+        max_chars: int = 400_000,
+        max_output_tokens: int = 4000,
+    ):
         self.llm = llm
+        self.repo = repo
         self.max_chars = max_chars
         self.max_output_tokens = max_output_tokens
+
+    async def get_clauses(self, contract_id: uuid.UUID) -> list[ClauseResponse]:
+        if self.repo is None:
+            raise RuntimeError("ClauseRepository must be injected to call get_clauses")
+        clauses = await self.repo.get_by_contract_id(contract_id)
+        return [ClauseResponse.model_validate(c) for c in clauses]
 
     async def extract_clauses(
         self, contract_id: uuid.UUID, raw_text: str

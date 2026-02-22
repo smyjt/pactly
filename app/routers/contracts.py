@@ -4,7 +4,9 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.exceptions import ContractNotFoundError, DuplicateContractError, UnsupportedFileTypeError
+from app.schemas.clause import ClauseResponse
 from app.schemas.contract import ContractResponse, ContractUploadResponse
+from app.services.clause_service import ClauseService
 from app.services.contract_service import ContractService
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,10 @@ router = APIRouter(prefix="/contracts", tags=["Contract Management"])
 
 def get_contract_service() -> ContractService:
     # Placeholder — overridden in main.py with real DB session injection
+    raise NotImplementedError("Dependency override not configured")
+
+
+def get_clause_service() -> ClauseService:
     raise NotImplementedError("Dependency override not configured")
 
 
@@ -50,6 +56,18 @@ async def get_contract(
     except ContractNotFoundError:
         logger.warning(f"Get contract — not found: contract_id={contract_id}")
         raise HTTPException(status_code=404, detail=f"Contract {contract_id} not found.")
+
+
+@router.get("/{contract_id}/clauses", response_model=list[ClauseResponse])
+async def get_clauses(
+    contract_id: uuid.UUID,
+    service: ClauseService = Depends(get_clause_service),
+):
+    """Get all extracted clauses for a contract."""
+    logger.info(f"Get clauses: contract_id={contract_id}")
+    clauses = await service.get_clauses(contract_id)
+    logger.info(f"Get clauses response: contract_id={contract_id} count={len(clauses)}")
+    return clauses
 
 
 @router.delete("/{contract_id}", status_code=status.HTTP_204_NO_CONTENT)
