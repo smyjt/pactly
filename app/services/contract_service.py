@@ -32,10 +32,12 @@ class ContractService:
         content = await file.read()
         file_hash = hashlib.sha256(content).hexdigest()
 
-        # 3. Reject duplicates
+        # 3. Reject duplicates — but allow re-upload if previous processing failed
         existing = await self.repo.get_by_file_hash(file_hash)
         if existing:
-            raise DuplicateContractError(file_hash)
+            if existing.status != "failed":
+                raise DuplicateContractError(file_hash)
+            await self.repo.delete(existing.id)
 
         # 4. Save file to disk
         file_ext = ALLOWED_CONTENT_TYPES[file.content_type]

@@ -39,6 +39,12 @@ class ContractRepository:
                 contract.error_message = error_message
             await self.session.flush()
 
+    async def delete(self, contract_id: uuid.UUID) -> None:
+        contract = await self.get_by_id(contract_id)
+        if contract:
+            await self.session.delete(contract)
+            await self.session.flush()
+
     async def update(self, contract_id: uuid.UUID, **kwargs) -> Contract | None:
         contract = await self.get_by_id(contract_id)
         if not contract:
