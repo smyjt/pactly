@@ -2,30 +2,40 @@ import asyncio
 import logging
 import uuid
 
+from celery import chain as celery_chain
+from celery.exceptions import MaxRetriesExceededError
+
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 
+def build_processing_chain(contract_id: str) -> celery_chain:
+    """Return a Celery chain that fully processes a contract.
+
+    To add a new processing phase, append its task here with .s().
+    Each task receives the previous task's return value as its first argument.
+    """
+    return celery_chain(
+        task_extract_and_chunk.s(contract_id),
+        task_extract_clauses.s(),
+    )
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10, acks_late=True)
-def process_contract(self, contract_id: str) -> dict:
-    """Background task: extract text, chunk, extract clauses via LLM, save to DB."""
-    logger.info(f"Starting processing for contract {contract_id}")
-    return asyncio.run(_process_contract_async(contract_id))
+def task_extract_and_chunk(self, contract_id: str) -> dict:
+    """Extract raw text from the uploaded file, chunk it, and save to DB."""
+    logger.info(f"[extract_and_chunk] Starting for contract {contract_id}")
+    return asyncio.run(_extract_and_chunk_async(self, contract_id))
 
 
-async def _process_contract_async(contract_id: str) -> dict:
-    # Lazy imports — avoids loading all app code on every Celery worker boot
+async def _extract_and_chunk_async(task, contract_id: str) -> dict:
     from app.config import Settings
     from app.database import create_engine, create_session_factory
     from app.repositories.chunk_repo import ChunkRepository
-    from app.repositories.clause_repo import ClauseRepository
     from app.repositories.contract_repo import ContractRepository
-    from app.repositories.llm_usage_log_repo import LLMUsageLogRepository
     from app.services.chunking_service import ChunkingService
-    from app.services.clause_service import ClauseService
     from app.services.extraction_service import ExtractionService
-    from app.services.llm.factory import create_llm_provider
 
     settings = Settings()
     engine = create_engine(settings)
@@ -33,24 +43,20 @@ async def _process_contract_async(contract_id: str) -> dict:
     cid = uuid.UUID(contract_id)
 
     try:
-        # Transaction 1: mark as processing so the status is visible immediately
         async with factory() as session:
             repo = ContractRepository(session)
             await repo.update(cid, status="processing")
             await session.commit()
 
-        # Transaction 2: full pipeline
         async with factory() as session:
             contract_repo = ContractRepository(session)
             contract = await contract_repo.get_by_id(cid)
             if not contract:
-                logger.error(f"Contract {contract_id} not found — cannot process")
+                logger.error(f"[extract_and_chunk] Contract {contract_id} not found")
                 return {"contract_id": contract_id, "status": "failed"}
 
-            # Step 1: Extract raw text from file
             extraction = ExtractionService().extract(contract.file_path, contract.content_type)
 
-            # Step 2: Chunk the text
             chunking_svc = ChunkingService(
                 chunk_size=settings.CHUNK_SIZE,
                 overlap=settings.CHUNK_OVERLAP,
@@ -67,12 +73,71 @@ async def _process_contract_async(contract_id: str) -> dict:
                 ],
             )
 
-            # Step 3: LLM clause extraction
+            # Save raw_text so the next task can read it without re-parsing the file
+            await contract_repo.update(
+                cid,
+                raw_text=extraction.raw_text,
+                page_count=extraction.page_count,
+                token_count=total_tokens,
+            )
+            await session.commit()
+
+        logger.info(
+            f"[extract_and_chunk] Done for contract {contract_id}: "
+            f"{len(chunks)} chunks, {extraction.page_count} pages"
+        )
+        return {"contract_id": contract_id}
+
+    except MaxRetriesExceededError:
+        await _mark_failed(factory, cid, "Max retries exceeded during text extraction")
+        raise
+
+    except Exception as exc:
+        logger.exception(f"[extract_and_chunk] Failed for contract {contract_id}: {exc}")
+        try:
+            raise task.retry(exc=exc)
+        except MaxRetriesExceededError:
+            await _mark_failed(factory, cid, str(exc))
+            raise
+
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=10, acks_late=True)
+def task_extract_clauses(self, prev_result: dict) -> dict:
+    """Extract structured clauses from the contract via LLM and save to DB."""
+    contract_id = prev_result["contract_id"]
+    logger.info(f"[extract_clauses] Starting for contract {contract_id}")
+    return asyncio.run(_extract_clauses_async(self, contract_id))
+
+
+async def _extract_clauses_async(task, contract_id: str) -> dict:
+    from app.config import Settings
+    from app.database import create_engine, create_session_factory
+    from app.repositories.clause_repo import ClauseRepository
+    from app.repositories.contract_repo import ContractRepository
+    from app.repositories.llm_usage_log_repo import LLMUsageLogRepository
+    from app.services.clause_service import ClauseService
+    from app.services.llm.factory import create_llm_provider
+
+    settings = Settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    cid = uuid.UUID(contract_id)
+
+    try:
+        async with factory() as session:
+            contract_repo = ContractRepository(session)
+            contract = await contract_repo.get_by_id(cid)
+            if not contract:
+                logger.error(f"[extract_clauses] Contract {contract_id} not found")
+                return {"contract_id": contract_id, "status": "failed"}
+
             llm = create_llm_provider(settings)
             clause_svc = ClauseService(llm)
-            clause_result, usage = await clause_svc.extract_clauses(cid, extraction.raw_text)
+            clause_result, usage = await clause_svc.extract_clauses(cid, contract.raw_text)
 
-            # Log LLM usage
             log_repo = LLMUsageLogRepository(session)
             await log_repo.create(
                 contract_id=cid,
@@ -81,14 +146,11 @@ async def _process_contract_async(contract_id: str) -> dict:
                 operation="clause_extraction",
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
-                cost_usd=_calculate_cost(
-                    usage["input_tokens"], usage["output_tokens"], usage["model"]
-                ),
+                cost_usd=_calculate_cost(usage["input_tokens"], usage["output_tokens"], usage["model"]),
                 latency_ms=usage["latency_ms"],
                 success=True,
             )
 
-            # Save clauses
             clause_repo = ClauseRepository(session)
             await clause_repo.bulk_create(
                 cid,
@@ -104,42 +166,39 @@ async def _process_contract_async(contract_id: str) -> dict:
                 ],
             )
 
-            # Update contract with extracted metadata and mark completed
-            await contract_repo.update(
-                cid,
-                raw_text=extraction.raw_text,
-                page_count=extraction.page_count,
-                token_count=total_tokens,
-                status="completed",
-            )
-
+            await contract_repo.update(cid, status="completed")
             await session.commit()
 
         clause_count = len(clause_result.clauses)
-        logger.info(
-            f"Contract {contract_id} processed: {clause_count} clauses, "
-            f"{len(chunks)} chunks, {extraction.page_count} pages"
-        )
-        return {
-            "contract_id": contract_id,
-            "status": "completed",
-            "clauses_count": clause_count,
-            "chunks_count": len(chunks),
-        }
+        logger.info(f"[extract_clauses] Done for contract {contract_id}: {clause_count} clauses")
+        return {"contract_id": contract_id, "clause_count": clause_count}
+
+    except MaxRetriesExceededError:
+        await _mark_failed(factory, cid, "Max retries exceeded during clause extraction")
+        raise
 
     except Exception as exc:
-        logger.exception(f"Failed to process contract {contract_id}: {exc}")
+        logger.exception(f"[extract_clauses] Failed for contract {contract_id}: {exc}")
         try:
-            async with factory() as session:
-                repo = ContractRepository(session)
-                await repo.update(cid, status="failed", error_message=str(exc))
-                await session.commit()
-        except Exception as inner_exc:
-            logger.error(f"Could not update failed status for {contract_id}: {inner_exc}")
-        return {"contract_id": contract_id, "status": "failed", "error": str(exc)}
+            raise task.retry(exc=exc)
+        except MaxRetriesExceededError:
+            await _mark_failed(factory, cid, str(exc))
+            raise
 
     finally:
         await engine.dispose()
+
+
+async def _mark_failed(factory, contract_id: uuid.UUID, error_message: str) -> None:
+    """Best-effort status update to failed. Swallows its own errors."""
+    try:
+        from app.repositories.contract_repo import ContractRepository
+        async with factory() as session:
+            repo = ContractRepository(session)
+            await repo.update(contract_id, status="failed", error_message=error_message)
+            await session.commit()
+    except Exception as inner:
+        logger.error(f"Could not mark contract {contract_id} as failed: {inner}")
 
 
 def _calculate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
