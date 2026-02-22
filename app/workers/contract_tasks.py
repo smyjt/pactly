@@ -135,7 +135,7 @@ async def _extract_clauses_async(task, contract_id: str) -> dict:
                 return {"contract_id": contract_id, "status": "failed"}
 
             llm = create_llm_provider(settings)
-            clause_svc = ClauseService(llm)
+            clause_svc = ClauseService(llm, max_chars=settings.LLM_MAX_CHARS, max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS)
             clause_result, usage = await clause_svc.extract_clauses(cid, contract.raw_text)
 
             log_repo = LLMUsageLogRepository(session)

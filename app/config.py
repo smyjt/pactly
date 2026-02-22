@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
     MAX_UPLOAD_SIZE_MB: int = 20
+    LLM_MAX_CHARS: int = 400_000  # reduce for providers with small context/rate limits
+    LLM_MAX_OUTPUT_TOKENS: int = 4000  # reduce for providers with low TPM limits
 
     # App
     LOG_LEVEL: str = "INFO"

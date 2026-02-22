@@ -11,14 +11,12 @@ from app.services.llm.prompts.clause_extraction import (
 
 logger = logging.getLogger(__name__)
 
-# Rough character limit before sending to LLM.
-# 4 chars ≈ 1 token for English text, so 400_000 chars ≈ 100k tokens.
-_MAX_CHARS = 400_000
-
 
 class ClauseService:
-    def __init__(self, llm: LLMProvider):
+    def __init__(self, llm: LLMProvider, max_chars: int = 400_000, max_output_tokens: int = 4000):
         self.llm = llm
+        self.max_chars = max_chars
+        self.max_output_tokens = max_output_tokens
 
     async def extract_clauses(
         self, contract_id: uuid.UUID, raw_text: str
@@ -28,7 +26,12 @@ class ClauseService:
         Returns:
             (ClauseExtractionResult, usage_dict) — validated clauses and usage metadata.
         """
-        truncated_text = raw_text[:_MAX_CHARS]
+        truncated_text = raw_text[:self.max_chars]
+        if len(raw_text) > self.max_chars:
+            logger.warning(
+                f"Contract {contract_id} text truncated from {len(raw_text)} "
+                f"to {self.max_chars} chars before LLM call"
+            )
 
         messages = [
             {"role": "system", "content": CLAUSE_EXTRACTION_SYSTEM},
@@ -43,7 +46,7 @@ class ClauseService:
         response = await self.llm.complete(
             messages=messages,
             temperature=0.0,
-            max_tokens=4000,
+            max_tokens=self.max_output_tokens,
             response_format={"type": "json_object"},
         )
 
