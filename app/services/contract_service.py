@@ -8,7 +8,8 @@ from fastapi import UploadFile
 from app.exceptions import ContractNotFoundError, DuplicateContractError, UnsupportedFileTypeError
 from app.repositories.contract_repo import ContractRepository
 from app.schemas.contract import ContractResponse, ContractUploadResponse
-from app.workers.contract_tasks import build_processing_chain
+from app.events.bus import event_bus
+from app.events.contract_events import ContractUploaded
 
 ALLOWED_CONTENT_TYPES = {
     "application/pdf": ".pdf",
@@ -55,7 +56,7 @@ class ContractService:
             status="pending",
         )
 
-        build_processing_chain(str(contract.id)).delay()
+        event_bus.publish(ContractUploaded(contract_id=contract.id, filename=contract.filename))
 
         return ContractUploadResponse(
             id=contract.id,

@@ -38,6 +38,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator:
     application.state.engine = engine
     application.state.session_factory = session_factory
 
+    from app.events.bus import event_bus
+    from app.events.contract_events import ContractUploaded
+    from app.events.handlers.contract_handlers import on_contract_uploaded
+    event_bus.register(ContractUploaded, on_contract_uploaded)
+
     yield
 
     await application.state.engine.dispose()
