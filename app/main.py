@@ -90,7 +90,7 @@ def create_app() -> FastAPI:
     application.include_router(contracts_router, prefix="/api/v1")
     application.dependency_overrides[get_contract_service] = get_contract_service_with_session
 
-    @application.get("/health", tags=["system"])
+    @application.get("/health", tags=["Health Check"])
     async def health_check():
         return {"status": "healthy", "version": "0.1.0"}
 
