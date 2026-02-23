@@ -19,6 +19,7 @@ def build_processing_chain(contract_id: str) -> celery_chain:
     return celery_chain(
         task_extract_and_chunk.s(contract_id),
         task_extract_clauses.s(),
+        task_generate_embeddings.s(),
     )
 
 
@@ -166,7 +167,6 @@ async def _extract_clauses_async(task, contract_id: str) -> dict:
                 ],
             )
 
-            await contract_repo.update(cid, status="completed")
             await session.commit()
 
         clause_count = len(clause_result.clauses)
@@ -179,6 +179,66 @@ async def _extract_clauses_async(task, contract_id: str) -> dict:
 
     except Exception as exc:
         logger.exception(f"[extract_clauses] Failed for contract {contract_id}: {exc}")
+        try:
+            raise task.retry(exc=exc)
+        except MaxRetriesExceededError:
+            await _mark_failed(factory, cid, str(exc))
+            raise
+
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=10, acks_late=True)
+def task_generate_embeddings(self, prev_result: dict) -> dict:
+    """Generate and store vector embeddings for all chunks of a contract."""
+    contract_id = prev_result["contract_id"]
+    logger.info(f"[generate_embeddings] Starting for contract {contract_id}")
+    return asyncio.run(_generate_embeddings_async(self, contract_id))
+
+
+async def _generate_embeddings_async(task, contract_id: str) -> dict:
+    from app.config import Settings
+    from app.database import create_engine, create_session_factory
+    from app.repositories.chunk_repo import ChunkRepository
+    from app.repositories.contract_repo import ContractRepository
+    from app.services.embedding_service import EmbeddingService
+
+    settings = Settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    cid = uuid.UUID(contract_id)
+
+    try:
+        async with factory() as session:
+            chunk_repo = ChunkRepository(session)
+            chunks = await chunk_repo.get_by_contract_id(cid)
+
+            if not chunks:
+                logger.warning(f"[generate_embeddings] No chunks found for contract {contract_id}")
+                return {"contract_id": contract_id, "embedded_chunks": 0}
+
+            embedding_svc = EmbeddingService(
+                api_key=settings.OPENAI_API_KEY,
+                model=settings.EMBEDDING_MODEL,
+                dimensions=settings.EMBEDDING_DIMENSION,
+            )
+            embeddings = await embedding_svc.embed([chunk.content for chunk in chunks])
+            await chunk_repo.bulk_update_embeddings(chunks, embeddings)
+
+            contract_repo = ContractRepository(session)
+            await contract_repo.update(cid, status="completed")
+            await session.commit()
+
+        logger.info(f"[generate_embeddings] Done for contract {contract_id}: {len(chunks)} chunks embedded")
+        return {"contract_id": contract_id, "embedded_chunks": len(chunks)}
+
+    except MaxRetriesExceededError:
+        await _mark_failed(factory, cid, "Max retries exceeded during embedding generation")
+        raise
+
+    except Exception as exc:
+        logger.exception(f"[generate_embeddings] Failed for contract {contract_id}: {exc}")
         try:
             raise task.retry(exc=exc)
         except MaxRetriesExceededError:
