@@ -20,7 +20,7 @@ from app.schemas.risk import (
 from app.services.llm.base import LLMProvider
 from app.services.llm.cost import estimate_llm_cost
 from app.services.llm.prompts.risk_assessment import RISK_ASSESSMENT_SYSTEM, RISK_ASSESSMENT_USER
-from app.services.risk_rules import score_clause
+from app.utils.risk_rules import score_clause
 
 logger = logging.getLogger(__name__)
 
