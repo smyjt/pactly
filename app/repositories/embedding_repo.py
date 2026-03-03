@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import Float, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk import ContractChunk
@@ -22,7 +22,7 @@ class EmbeddingRepository:
         more similar. Cosine distance is converted to similarity (1 - distance)
         so callers get an intuitive score where 1.0 = identical, 0.0 = opposite.
         """
-        distance_expr = ContractChunk.embedding.op("<=>")(query_embedding).label("distance")
+        distance_expr = cast(ContractChunk.embedding.op("<=>")(query_embedding), Float).label("distance")
         result = await self.session.execute(
             select(ContractChunk, distance_expr)
             .where(ContractChunk.contract_id == contract_id)

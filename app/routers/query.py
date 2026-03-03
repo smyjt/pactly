@@ -9,7 +9,7 @@ from app.services.query_service import QueryService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/contracts", tags=["Query"])
+router = APIRouter(prefix="/contracts", tags=["Query Management"])
 
 
 def get_query_service() -> QueryService:
