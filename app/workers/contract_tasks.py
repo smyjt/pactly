@@ -5,6 +5,7 @@ import uuid
 from celery import chain as celery_chain
 from celery.exceptions import MaxRetriesExceededError
 
+from app.services.llm.cost import estimate_llm_cost
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ async def _extract_clauses_async(task, contract_id: str) -> dict:
                 operation="clause_extraction",
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
-                cost_usd=_calculate_cost(usage["input_tokens"], usage["output_tokens"], usage["model"]),
+                cost_usd=estimate_llm_cost(usage["input_tokens"], usage["output_tokens"], usage["model"]),
                 latency_ms=usage["latency_ms"],
                 success=True,
             )
@@ -259,13 +260,3 @@ async def _mark_failed(factory, contract_id: uuid.UUID, error_message: str) -> N
             await session.commit()
     except Exception as inner:
         logger.error(f"Could not mark contract {contract_id} as failed: {inner}")
-
-
-def _calculate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
-    """Estimate cost in USD based on OpenAI pricing (per 1M tokens)."""
-    PRICING: dict[str, dict[str, float]] = {
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-        "gpt-4o": {"input": 2.50, "output": 10.00},
-    }
-    rates = PRICING.get(model, PRICING["gpt-4o-mini"])
-    return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
