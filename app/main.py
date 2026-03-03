@@ -94,9 +94,30 @@ def create_app() -> FastAPI:
     ) -> ClauseService:
         return ClauseService(llm=create_llm_provider(settings), repo=ClauseRepository(session))
 
+    from app.repositories.embedding_repo import EmbeddingRepository
+    from app.routers.query import router as query_router, get_query_service
+    from app.services.embedding_service import EmbeddingService
+    from app.services.query_service import QueryService
+
+    async def get_query_service_with_session(
+        session: AsyncSession = Depends(get_session),
+    ) -> QueryService:
+        return QueryService(
+            session=session,
+            llm=create_llm_provider(settings),
+            embedding_service=EmbeddingService(
+                api_key=settings.OPENAI_API_KEY,
+                model=settings.EMBEDDING_MODEL,
+                dimensions=settings.EMBEDDING_DIMENSION,
+            ),
+            llm_provider_name=settings.LLM_PROVIDER,
+        )
+
     application.include_router(contracts_router, prefix="/api/v1")
+    application.include_router(query_router, prefix="/api/v1")
     application.dependency_overrides[get_contract_service] = get_contract_service_with_session
     application.dependency_overrides[get_clause_service] = get_clause_service_with_session
+    application.dependency_overrides[get_query_service] = get_query_service_with_session
 
     @application.get("/health", tags=["Health Check"])
     async def health_check():
