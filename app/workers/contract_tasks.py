@@ -21,6 +21,7 @@ def build_processing_chain(contract_id: str) -> celery_chain:
         task_extract_and_chunk.s(contract_id),
         task_extract_clauses.s(),
         task_generate_embeddings.s(),
+        task_score_risk.s(),
     )
 
 
@@ -227,8 +228,6 @@ async def _generate_embeddings_async(task, contract_id: str) -> dict:
             embeddings = await embedding_svc.embed([chunk.content for chunk in chunks])
             await chunk_repo.bulk_update_embeddings(chunks, embeddings)
 
-            contract_repo = ContractRepository(session)
-            await contract_repo.update(cid, status="completed")
             await session.commit()
 
         logger.info(f"[generate_embeddings] Done for contract {contract_id}: {len(chunks)} chunks embedded")
@@ -240,6 +239,56 @@ async def _generate_embeddings_async(task, contract_id: str) -> dict:
 
     except Exception as exc:
         logger.exception(f"[generate_embeddings] Failed for contract {contract_id}: {exc}")
+        try:
+            raise task.retry(exc=exc)
+        except MaxRetriesExceededError:
+            await _mark_failed(factory, cid, str(exc))
+            raise
+
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=10, acks_late=True)
+def task_score_risk(self, prev_result: dict) -> dict:
+    """Score risk for all clauses and mark contract as completed."""
+    contract_id = prev_result["contract_id"]
+    logger.info(f"[score_risk] Starting for contract {contract_id}")
+    return asyncio.run(_score_risk_async(self, contract_id))
+
+
+async def _score_risk_async(task, contract_id: str) -> dict:
+    from app.config import Settings
+    from app.database import create_engine, create_session_factory
+    from app.repositories.contract_repo import ContractRepository
+    from app.services.llm.factory import create_llm_provider
+    from app.services.risk_service import RiskService
+
+    settings = Settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    cid = uuid.UUID(contract_id)
+
+    try:
+        async with factory() as session:
+            risk_svc = RiskService(
+                session=session,
+                llm=create_llm_provider(settings),
+                llm_provider_name=settings.LLM_PROVIDER,
+            )
+            await risk_svc.score_contract(cid)
+            await ContractRepository(session).update(cid, status="completed")
+            await session.commit()
+
+        logger.info(f"[score_risk] Done for contract {contract_id}")
+        return {"contract_id": contract_id}
+
+    except MaxRetriesExceededError:
+        await _mark_failed(factory, cid, "Max retries exceeded during risk scoring")
+        raise
+
+    except Exception as exc:
+        logger.exception(f"[score_risk] Failed for contract {contract_id}: {exc}")
         try:
             raise task.retry(exc=exc)
         except MaxRetriesExceededError:
