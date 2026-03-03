@@ -113,11 +113,25 @@ def create_app() -> FastAPI:
             llm_provider_name=settings.LLM_PROVIDER,
         )
 
+    from app.routers.analysis import router as analysis_router, get_risk_service
+    from app.services.risk_service import RiskService
+
+    async def get_risk_service_with_session(
+        session: AsyncSession = Depends(get_session),
+    ) -> RiskService:
+        return RiskService(
+            session=session,
+            llm=create_llm_provider(settings),
+            llm_provider_name=settings.LLM_PROVIDER,
+        )
+
     application.include_router(contracts_router, prefix="/api/v1")
     application.include_router(query_router, prefix="/api/v1")
+    application.include_router(analysis_router, prefix="/api/v1")
     application.dependency_overrides[get_contract_service] = get_contract_service_with_session
     application.dependency_overrides[get_clause_service] = get_clause_service_with_session
     application.dependency_overrides[get_query_service] = get_query_service_with_session
+    application.dependency_overrides[get_risk_service] = get_risk_service_with_session
 
     @application.get("/health", tags=["Health Check"])
     async def health_check():
