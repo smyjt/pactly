@@ -15,18 +15,22 @@ class EmbeddingRepository:
         contract_id: uuid.UUID,
         query_embedding: list[float],
         top_k: int = 5,
-    ) -> list[ContractChunk]:
+    ) -> list[tuple[ContractChunk, float]]:
         """Return the top_k chunks most similar to the query embedding.
 
         Uses pgvector's cosine distance operator (<=>) — lower distance means
-        more similar. Filters to the given contract so results are always
-        scoped to a single document.
+        more similar. Cosine distance is converted to similarity (1 - distance)
+        so callers get an intuitive score where 1.0 = identical, 0.0 = opposite.
         """
+        distance_expr = ContractChunk.embedding.op("<=>")(query_embedding).label("distance")
         result = await self.session.execute(
-            select(ContractChunk)
+            select(ContractChunk, distance_expr)
             .where(ContractChunk.contract_id == contract_id)
             .where(ContractChunk.embedding.is_not(None))
-            .order_by(ContractChunk.embedding.op("<=>")(query_embedding))
+            .order_by(distance_expr)
             .limit(top_k)
         )
-        return list(result.scalars().all())
+        return [
+            (chunk, round(1.0 - float(distance), 4))
+            for chunk, distance in result.all()
+        ]
